@@ -1,0 +1,212 @@
+/* LenDenClub Auto-Filter - Floating HUD Styles */
+
+#lenden-auto-hud {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: 2147483647;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-size: 13px;
+  color: #0f172a;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.2), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+  border-radius: 12px;
+  overflow: hidden;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  line-height: 1.4;
+  user-select: none;
+}
+
+#lenden-auto-hud * {
+  box-sizing: border-box;
+}
+
+.ld-hud-minimized {
+  background: #0f172a;
+  color: #f8fafc;
+  padding: 8px 14px;
+  border-radius: 24px !important;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  font-weight: 600;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.ld-hud-minimized:hover {
+  background: #1e293b;
+}
+
+.ld-hud-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #10b981;
+}
+
+.ld-hud-dot.running {
+  background: #3b82f6;
+  box-shadow: 0 0 8px #3b82f6;
+  animation: ld-pulse 1.5s infinite;
+}
+
+.ld-hud-dot.idle {
+  background: #10b981;
+}
+
+.ld-hud-dot.error {
+  background: #ef4444;
+}
+
+@keyframes ld-pulse {
+  0% { transform: scale(0.95); opacity: 0.8; }
+  50% { transform: scale(1.25); opacity: 1; }
+  100% { transform: scale(0.95); opacity: 0.8; }
+}
+
+.ld-hud-card {
+  width: 320px;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+}
+
+.ld-hud-header {
+  background: #0f172a;
+  color: #f8fafc;
+  padding: 10px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.ld-hud-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 700;
+  font-size: 13px;
+}
+
+.ld-hud-controls {
+  display: flex;
+  gap: 6px;
+}
+
+.ld-hud-btn-icon {
+  background: transparent;
+  border: none;
+  color: #94a3b8;
+  cursor: pointer;
+  padding: 2px 6px;
+  font-size: 14px;
+  line-height: 1;
+  border-radius: 4px;
+}
+
+.ld-hud-btn-icon:hover {
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.ld-hud-body {
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ld-hud-status-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.ld-hud-status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.ld-status-running {
+  background: #eff6ff;
+  color: #1d4ed8;
+  border: 1px solid #bfdbfe;
+}
+
+.ld-status-idle {
+  background: #ecfdf5;
+  color: #047857;
+  border: 1px solid #a7f3d0;
+}
+
+.ld-status-error {
+  background: #fef2f2;
+  color: #b91c1c;
+  border: 1px solid #fecaca;
+}
+
+.ld-hud-timer {
+  font-size: 12px;
+  color: #64748b;
+  font-weight: 500;
+}
+
+.ld-hud-step {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  padding: 8px;
+  font-size: 12px;
+  color: #334155;
+  word-break: break-word;
+}
+
+.ld-hud-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.ld-btn {
+  flex: 1;
+  padding: 7px 12px;
+  border: none;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  transition: all 0.15s ease;
+}
+
+.ld-btn-primary {
+  background: #00875a;
+  color: white;
+}
+
+.ld-btn-primary:hover {
+  background: #00704a;
+}
+
+.ld-btn-danger {
+  background: #f1f5f9;
+  color: #dc2626;
+  border: 1px solid #e2e8f0;
+}
+
+.ld-btn-danger:hover {
+  background: #fee2e2;
+  border-color: #fca5a5;
+}
+
