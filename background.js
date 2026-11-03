@@ -1,5 +1,6 @@
 // LenDenClub Auto-Filter & Reload - Background Service Worker
 
+const SCRIPT_VERSION = '2.7.0';
 const ALARM_NAME = 'LENDEN_CYCLE_ALARM';
 
 const DEFAULT_SETTINGS = {
@@ -11,10 +12,11 @@ const DEFAULT_SETTINGS = {
   categories: ['Repeat Loans', 'Filling Fast', 'Earn Monthly'], // Skipped Earn Daily
   autoDetectCategories: true,
   actionDelayMs: 1800,
-  minBureauScore: 700,             // Bureau score threshold (> 700)
-  autoAddLoans: true,              // Auto-click "Add Loan" if score > threshold
+  minBureauScore: 700,             // Bureau score threshold (>= 700)
+  autoAddLoans: true,              // Auto-click "Add Loan" if score >= threshold
   maxLoansPerCategory: 50,         // Max borrower cards to inspect/check per category
   maxLoansToSelect: 50,            // Max loans to add/select per category (up to 300)
+  selectMinAmount: true,           // Select ₹250 minimum lending amount per loan if available
   autoOpenTab: true,
   showFloatingHud: true,
   desktopNotifications: true
@@ -160,7 +162,13 @@ async function runAutomationCycle(source = 'manual') {
     let pingSucceeded = false;
     try {
       const resp = await chrome.tabs.sendMessage(targetTab.id, { action: "PING" });
-      if (resp && resp.status === 'pong') {
+      if (resp && resp.status === 'pong' && resp.version === SCRIPT_VERSION) {
+        pingSucceeded = true;
+      } else {
+        addLog(`Updating LenDenClub tab with latest automation engine (v${SCRIPT_VERSION}). Reloading page...`, 'info');
+        await chrome.tabs.reload(targetTab.id);
+        await waitForTabLoad(targetTab.id);
+        await new Promise(r => setTimeout(r, 2500));
         pingSucceeded = true;
       }
     } catch (e) {
@@ -168,7 +176,22 @@ async function runAutomationCycle(source = 'manual') {
     }
 
     if (!pingSucceeded) {
-      addLog('Connecting script to LenDenClub tab...', 'info');
+      // A dead/orphaned script (e.g. after the extension was reloaded) can block re-injection,
+      // so reload the tab to get a fresh content script from the manifest.
+      addLog('Connecting script to LenDenClub tab (reloading page for a fresh script)...', 'info');
+      try {
+        await chrome.tabs.reload(targetTab.id);
+        await waitForTabLoad(targetTab.id);
+        await new Promise(r => setTimeout(r, 2500));
+        const resp2 = await chrome.tabs.sendMessage(targetTab.id, { action: "PING" }).catch(() => null);
+        if (resp2 && resp2.status === 'pong') pingSucceeded = true;
+      } catch (reloadErr) {
+        console.warn('Tab reload notice:', reloadErr.message);
+      }
+    }
+
+    if (!pingSucceeded) {
+      addLog('Injecting script into LenDenClub tab...', 'info');
       try {
         if (chrome.scripting && chrome.scripting.executeScript) {
           await chrome.scripting.executeScript({
@@ -355,7 +378,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           });
 
           const status = loan.status || 'Accepted';
-          const reason = loan.reason || (status === 'Accepted' ? `Bureau Score ${loan.bureauScore} > 700` : `Bureau Score ${loan.bureauScore} <= 700`);
+          const reason = loan.reason || (status === 'Accepted' ? `Bureau Score ${loan.bureauScore} >= threshold` : `Bureau Score ${loan.bureauScore} < threshold`);
 
           const record = {
             name: loan.name,
