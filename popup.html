@@ -148,7 +148,7 @@
         <div class="option-row">
           <div>
             <div class="option-title">Min Bureau Score</div>
-            <div class="help-text">Click "Add Loan" only if score &gt; this threshold</div>
+            <div class="help-text">Click "Add Loan" only if score &ge; this threshold</div>
           </div>
           <input type="number" id="input-min-score" min="300" max="900" step="10" value="700" class="input-inline">
         </div>
@@ -156,7 +156,7 @@
         <div class="option-row">
           <div>
             <div class="option-title">Auto-Add Qualified Loans</div>
-            <div class="help-text">Automatically clicks Add Loan when score &gt; threshold</div>
+            <div class="help-text">Automatically clicks Add Loan when score &ge; threshold</div>
           </div>
           <label class="switch switch-sm">
             <input type="checkbox" id="opt-auto-add" checked>
@@ -178,6 +178,17 @@
             <div class="help-text">Stop category once this many loans are added (max 300)</div>
           </div>
           <input type="number" id="input-max-select" min="1" max="300" value="50" class="input-inline">
+        </div>
+
+        <div class="option-row">
+          <div>
+            <div class="option-title">Select Min Amount (₹250)</div>
+            <div class="help-text">Selects ₹250 minimum lending amount before applying filters</div>
+          </div>
+          <label class="switch switch-sm">
+            <input type="checkbox" id="opt-select-min-amount" checked>
+            <span class="slider round"></span>
+          </label>
         </div>
 
         <div class="divider"></div>
