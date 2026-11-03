@@ -1,12 +1,14 @@
 // LenDenClub Auto-Filter & Smart Loan Picker - Content Script
 
 (() => {
+  const CONTENT_SCRIPT_VERSION = '2.7.0';
+
   if (window.__LENDEN_AUTO_INJECTED__) {
     return;
   }
   window.__LENDEN_AUTO_INJECTED__ = true;
 
-  console.log('[LenDenClub Automator] Content script loaded on', window.location.href);
+  console.log(`[LenDenClub Automator v${CONTENT_SCRIPT_VERSION}] Content script loaded on`, window.location.href);
 
   let isCycleRunning = false;
   let stopRequested = false;
@@ -18,7 +20,7 @@
   // Listen for messages from background / popup
   chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     if (request.action === 'PING') {
-      sendResponse({ status: 'pong', isRunning: isCycleRunning });
+      sendResponse({ status: 'pong', version: CONTENT_SCRIPT_VERSION, isRunning: isCycleRunning });
       return false;
     }
 
@@ -1212,7 +1214,7 @@
     return null;
   }
 
-  // Review each borrower card, click the chevron/pill, check Bureau Score, and add if > 700
+  // Review each borrower card, click the chevron/pill, check Bureau Score, and add if >= threshold
   async function reviewAndFilterLoans(categoryName, settings, actionDelay, remainingSelectLimit = null) {
     const minScore = parseInt(settings.minBureauScore ?? 700, 10);
     const maxLoans = parseInt(settings.maxLoansPerCategory ?? 50, 10);
@@ -1261,7 +1263,7 @@
       logEvent(`Loaded ${savedSelectedLoans.length} previously inspected loan(s) (${acceptedCount} accepted, ${rejectedCount} rejected) - will be automatically skipped.`, 'info');
     }
 
-    logEvent(`Starting loan evaluation in "${categoryName}" (Check up to: ${maxLoans}, Target selection: ${maxSelect}, Bureau Score: > ${minScore})...`, 'info');
+    logEvent(`Starting loan evaluation in "${categoryName}" (Check up to: ${maxLoans}, Target selection: ${maxSelect}, Bureau Score: >= ${minScore})...`, 'info');
 
     let qualifiedCount = 0;
     let inspectedCount = 0;
@@ -1322,7 +1324,17 @@
         return /-\s*Remove/i.test((b.innerText || b.textContent || '').trim());
       });
 
-      if (savedRecord || isCardAlreadyAdded) {
+      // A previously rejected loan whose saved score now meets the threshold (e.g. score == threshold,
+      // or threshold was lowered) must be re-checked instead of skipped.
+      const savedScoreNum = savedRecord ? parseInt(savedRecord.bureauScore, 10) : NaN;
+      const shouldRecheckRejected = !!savedRecord && !isCardAlreadyAdded &&
+        (savedRecord.status || 'Accepted') === 'Rejected' &&
+        !isNaN(savedScoreNum) && savedScoreNum >= minScore;
+      if (shouldRecheckRejected) {
+        logEvent(`↻ Re-checking "${borrower.name}": previously rejected with Bureau Score ${savedScoreNum}, which now meets >= ${minScore}.`, 'info');
+      }
+
+      if ((savedRecord && !shouldRecheckRejected) || isCardAlreadyAdded) {
         let skipReason = '';
         if (savedRecord) {
           const st = savedRecord.status || 'Accepted';
@@ -1367,8 +1379,8 @@
       if (bureauScore !== null) {
         logEvent(`"${borrower.name}" → Bureau Score: ${bureauScore}`, 'info');
 
-        if (bureauScore > minScore) {
-          logEvent(`✓ Qualified! Bureau Score ${bureauScore} > ${minScore}. Adding loan...`, 'success');
+        if (bureauScore >= minScore) {
+          logEvent(`✓ Qualified! Bureau Score ${bureauScore} >= ${minScore}. Adding loan...`, 'success');
 
           const added = await clickAddLoanAndVerify(modal, borrower.name);
           if (added) {
@@ -1383,7 +1395,7 @@
               bureauScore: bureauScore,
               category: categoryName,
               status: 'Accepted',
-              reason: `Bureau Score ${bureauScore} > ${minScore}`,
+              reason: `Bureau Score ${bureauScore} >= ${minScore}`,
               timestamp: Date.now()
             };
             chrome.runtime.sendMessage({
@@ -1416,7 +1428,7 @@
               bureauScore: bureauScore,
               category: categoryName,
               status: 'Accepted',
-              reason: `Bureau Score ${bureauScore} > ${minScore}`,
+              reason: `Bureau Score ${bureauScore} >= ${minScore}`,
               timestamp: Date.now()
             };
             chrome.runtime.sendMessage({
@@ -1436,7 +1448,7 @@
         } else {
           // Disqualified loan - save as Rejected so it's not checked again in future runs!
           const loanId = extractLoanIdentifier(borrower.card, modal) || `LDC-${Math.floor(100000 + Math.random() * 900000)}`;
-          const reason = `Bureau Score ${bureauScore} <= ${minScore}`;
+          const reason = `Bureau Score ${bureauScore} < ${minScore}`;
           logEvent(`✕ Skipped: ${reason} for "${borrower.name}". (Saved to rejected history)`, 'info');
 
           const record = {
@@ -1484,7 +1496,7 @@
       await sleep(500);
     }
 
-    logEvent(`✓ Finished review for "${categoryName}". Inspected ${inspectedCount} loan(s), added ${qualifiedCount}/${maxSelect} with Bureau Score > ${minScore}.`, 'success');
+    logEvent(`✓ Finished review for "${categoryName}". Inspected ${inspectedCount} loan(s), added ${qualifiedCount}/${maxSelect} with Bureau Score >= ${minScore}.`, 'success');
     return qualifiedCount;
   }
 
@@ -1709,6 +1721,173 @@
     }
   }
 
+  // -------------------------------------------------------------
+  // CHOOSE LENDING AMOUNT HANDLER (SELECT MINIMUM ₹250)
+  // -------------------------------------------------------------
+
+  function getVisibleText(el) {
+    return ((el && (el.innerText || el.textContent)) || '').replace(/\s+/g, ' ').trim();
+  }
+
+  function parseRupees(str) {
+    const n = parseInt(String(str || '').replace(/[^\d]/g, ''), 10);
+    return isNaN(n) ? null : n;
+  }
+
+  // Finds the "Choose Lending Amount" card (the panel containing the slider + ₹250/₹2,000/₹4,000 presets)
+  function findLendingAmountPanel() {
+    const anchor = findLeafElementByText(/I\s*want\s*to\s*lend\s*up\s*to/i) ||
+                   findLeafElementByText(/^Choose\s+Lending\s+Amount$/i);
+    if (!anchor) return null;
+
+    let cur = anchor;
+    for (let i = 0; i < 10 && cur && cur !== document.body; i++) {
+      const t = getVisibleText(cur);
+      if (/per\s*loan/i.test(t) && /250/.test(t) && /(2,?000|4,?000)/.test(t)) {
+        return cur;
+      }
+      cur = cur.parentElement;
+    }
+    return null;
+  }
+
+  // Reads the currently selected amount from "I want to lend up to ₹X per loan". Returns a number or null.
+  function getCurrentLendingAmount() {
+    const panel = findLendingAmountPanel();
+    const scope = panel || document.body;
+
+    // a) Strict element: "₹1,000 per loan" / "₹250 per loan"
+    const els = Array.from(scope.querySelectorAll('*'));
+    for (const el of els) {
+      if (el.closest('#lenden-auto-hud')) continue;
+      const t = getVisibleText(el);
+      if (t.length > 40) continue;
+      const m = t.match(/^[₹\u20B9]?\s*([\d,]+)\s*per\s*loan$/i);
+      if (m) return parseRupees(m[1]);
+    }
+
+    // b) Fallback: "I want to lend up to ₹X per loan" (amount must be IMMEDIATELY followed by "per loan")
+    const t = getVisibleText(scope);
+    const m = t.match(/lend\s*up\s*to\s*[₹\u20B9]?\s*([\d,]+)\s*per\s*loan/i);
+    if (m) return parseRupees(m[1]);
+
+    return null;
+  }
+
+  function isMinimumAmountAlreadySelected() {
+    return getCurrentLendingAmount() === 250;
+  }
+
+  // Finds the "₹250" PRESET button (not the "Minimum ₹250" slider label)
+  function findMinimumAmount250Button() {
+    const panel = findLendingAmountPanel();
+    if (!panel) return null;
+
+    const candidates = [];
+    const all = Array.from(panel.querySelectorAll('*'));
+    for (const el of all) {
+      if (el.closest('#lenden-auto-hud')) continue;
+      const clean = getVisibleText(el).replace(/[₹\u20B9\s,]/g, '');
+      if (clean !== '250') continue;
+
+      const rect = el.getBoundingClientRect();
+      if (rect.width < 5 || rect.height < 5) continue;
+
+      // Exclude the slider's "Minimum / ₹250" tick label
+      const parentText = getVisibleText(el.parentElement);
+      const prevText = getVisibleText(el.previousElementSibling);
+      if (/^Minimum$/i.test(prevText) || /^Minimum\s*[₹\u20B9]?\s*250$/i.test(parentText)) continue;
+
+      candidates.push({ el, rect });
+    }
+
+    if (candidates.length === 0) return null;
+
+    // Prefer real buttons, then the lowest element on screen (presets sit below the slider labels),
+    // then the largest box (the button wrapper rather than the inner text span)
+    candidates.sort((a, b) => {
+      const aBtn = !!a.el.closest('button, [role="button"]');
+      const bBtn = !!b.el.closest('button, [role="button"]');
+      if (aBtn !== bBtn) return aBtn ? -1 : 1;
+      if (Math.abs(b.rect.top - a.rect.top) > 4) return b.rect.top - a.rect.top;
+      return (b.rect.width * b.rect.height) - (a.rect.width * a.rect.height);
+    });
+
+    const chosen = candidates[0].el;
+    return chosen.closest('button, [role="button"]') || chosen;
+  }
+
+  // Build a list of click targets: the button, its inner text node holder, and its parents (some React
+  // components attach onClick to a wrapper rather than the element containing the text)
+  function getAmountButtonClickTargets(btn) {
+    const targets = [];
+    const push = (el) => { if (el && !targets.includes(el) && el !== document.body) targets.push(el); };
+    push(btn);
+    const inner = Array.from(btn.querySelectorAll('*')).find(c => getVisibleText(c).replace(/[₹\u20B9\s,]/g, '') === '250');
+    push(inner);
+    push(btn.parentElement);
+    return targets;
+  }
+
+  async function selectMinimumLendingAmount(categoryName, settings, actionDelay) {
+    logEvent(`Checking for "Choose Lending Amount" (₹250 minimum) in "${categoryName}"...`, 'info');
+
+    if (settings && settings.selectMinAmount === false) {
+      logEvent('"Select Min Amount (₹250)" is turned OFF in Options. Skipping.', 'info');
+      return false;
+    }
+
+    // Wait up to 5s for the lending amount panel to mount
+    const panel = await waitFor(() => findLendingAmountPanel(), 5000, 300);
+    if (!panel) {
+      logEvent(`"Choose Lending Amount" panel not present in "${categoryName}"; proceeding with existing amount.`, 'info');
+      return false;
+    }
+
+    const before = getCurrentLendingAmount();
+    if (before === 250) {
+      logEvent(`ℹ Lending amount is already ₹250 per loan in "${categoryName}".`, 'info');
+      return true;
+    }
+
+    const btn250 = await waitFor(() => findMinimumAmount250Button(), 3000, 300);
+    if (!btn250) {
+      logEvent(`"₹250" preset button not found in "${categoryName}" (current: ₹${before ?? '?'} per loan). Proceeding.`, 'warn');
+      return false;
+    }
+
+    logEvent(`Current amount ₹${before ?? '?'} per loan. Clicking "₹250" preset (${btn250.tagName}) in "${categoryName}"...`, 'info');
+
+    const targets = getAmountButtonClickTargets(btn250);
+    for (let i = 0; i < targets.length; i++) {
+      triggerRealClick(targets[i]);
+      const ok = await waitFor(() => isMinimumAmountAlreadySelected(), 1500, 250);
+      if (ok) {
+        logEvent(`✓ Lending amount set to ₹250 per loan in "${categoryName}".`, 'success');
+        await sleep(Math.min(800, actionDelay / 2));
+        return true;
+      }
+    }
+
+    // Last resort: a native range input, if the slider uses one
+    try {
+      const sliderInput = panel.querySelector('input[type="range"]');
+      if (sliderInput) {
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+        setter.call(sliderInput, String(sliderInput.min || 250));
+        sliderInput.dispatchEvent(new Event('input', { bubbles: true }));
+        sliderInput.dispatchEvent(new Event('change', { bubbles: true }));
+        if (await waitFor(() => isMinimumAmountAlreadySelected(), 1500, 250)) {
+          logEvent(`✓ Lending amount set to ₹250 per loan via slider in "${categoryName}".`, 'success');
+          return true;
+        }
+      }
+    } catch (e) {}
+
+    logEvent(`⚠ Could not confirm ₹250 selection in "${categoryName}" (still shows ₹${getCurrentLendingAmount() ?? '?'} per loan). Proceeding.`, 'warn');
+    return false;
+  }
+
   async function processCategory(categoryName, settings, actionDelay, remainingSelectLimit = 50) {
     // 1. Get click targets for this category (scoped strictly to Trending Container)
     const targets = await waitFor(() => {
@@ -1744,6 +1923,9 @@
         return { success: false, addedCount: 0, reachedTargetLimit: false };
       }
     }
+
+    // 2.5. Select Minimum Lending Amount (₹250) if present in this category before applying filters
+    await selectMinimumLendingAmount(categoryName, settings, actionDelay);
 
     // 3. Click "Filter & Sort"
     logEvent(`Clicking "Filter & Sort" button...`, 'info');
@@ -1787,6 +1969,15 @@
     // 7. Explicit 3-second wait as requested for loans to load
     logEvent(`Filters applied for "${categoryName}". Waiting 3 seconds for loans to load...`, 'info');
     await sleep(3000);
+
+    // 7.5 Re-verify ₹250 (applying saved filters can reset the lending amount on some categories)
+    if (!(settings && settings.selectMinAmount === false) && findLendingAmountPanel()) {
+      const amt = getCurrentLendingAmount();
+      if (amt !== null && amt !== 250) {
+        logEvent(`Lending amount changed to ₹${amt} after applying filters. Re-selecting ₹250...`, 'warn');
+        await selectMinimumLendingAmount(categoryName, settings, actionDelay);
+      }
+    }
 
     // 8. Wait for either loan cards OR "No loans match your filters"
     const result = await waitFor(() => {
