@@ -29,6 +29,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   const optAutoAdd = document.getElementById('opt-auto-add');
   const inputMaxLoans = document.getElementById('input-max-loans');
   const inputMaxSelect = document.getElementById('input-max-select');
+  const optSelectMinAmount = document.getElementById('opt-select-min-amount');
 
   const inputDelay = document.getElementById('input-delay');
   const optAutoOpen = document.getElementById('opt-auto-open');
@@ -76,6 +77,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     minBureauScore: 700,
     autoAddLoans: true,
     maxLoansPerCategory: 50,
+    maxLoansToSelect: 50,
+    selectMinAmount: true,
     actionDelayMs: 1800,
     autoOpenTab: true,
     showFloatingHud: true,
@@ -110,6 +113,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   optAutoAdd.checked = currentSettings.autoAddLoans !== false;
   inputMaxLoans.value = currentSettings.maxLoansPerCategory ?? 50;
   inputMaxSelect.value = currentSettings.maxLoansToSelect ?? 50;
+  if (optSelectMinAmount) optSelectMinAmount.checked = currentSettings.selectMinAmount !== false;
 
   inputDelay.value = currentSettings.actionDelayMs || 1800;
   optAutoOpen.checked = currentSettings.autoOpenTab !== false;
@@ -136,9 +140,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   const autoSaveInputs = [
     masterToggle, inputTargetMinutes, inputIntervalMins,
     catRepeat, catFilling, catDaily, catMonthly, optAutoDetect,
-    inputMinScore, optAutoAdd, inputMaxLoans, inputMaxSelect,
+    inputMinScore, optAutoAdd, inputMaxLoans, inputMaxSelect, optSelectMinAmount,
     inputDelay, optAutoOpen, optFloatingHud, optNotifications
-  ];
+  ].filter(Boolean);
 
   autoSaveInputs.forEach(input => {
     input.addEventListener('change', saveSettings);
@@ -169,6 +173,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       autoAddLoans: optAutoAdd.checked,
       maxLoansPerCategory: parseInt(inputMaxLoans.value || 50, 10),
       maxLoansToSelect: Math.min(300, Math.max(1, parseInt(inputMaxSelect.value || 50, 10))),
+      selectMinAmount: optSelectMinAmount ? optSelectMinAmount.checked : true,
       actionDelayMs: parseInt(inputDelay.value || 1800, 10),
       autoOpenTab: optAutoOpen.checked,
       showFloatingHud: optFloatingHud.checked,
@@ -210,7 +215,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       scheduleSummary.textContent = `Every ${inputIntervalMins.value || 31} minutes`;
     }
 
-    bureauSummary.textContent = `Score > ${inputMinScore.value || 700} (Max select: ${inputMaxSelect.value || 50})`;
+    bureauSummary.textContent = `Score ≥ ${inputMinScore.value || 700} (Max select: ${inputMaxSelect.value || 50})`;
   }
 
   function updateStatusDisplay(running, status, message) {
