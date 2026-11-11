@@ -1,6 +1,6 @@
 // LenDenClub Auto-Filter & Reload - Background Service Worker
 
-const SCRIPT_VERSION = '2.7.0';
+const SCRIPT_VERSION = '2.8.0';
 const ALARM_NAME = 'LENDEN_CYCLE_ALARM';
 
 const DEFAULT_SETTINGS = {
