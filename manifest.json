@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "LenDenClub Auto-Filter & Reload",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "Automates LenDenClub categories: re-loads last used filters & sort, applies them, and runs automatically every 31st minute in the background.",
   "permissions": [
     "alarms",
