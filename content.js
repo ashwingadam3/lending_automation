@@ -1,7 +1,7 @@
 // LenDenClub Auto-Filter & Smart Loan Picker - Content Script
 
 (() => {
-  const CONTENT_SCRIPT_VERSION = '2.7.0';
+  const CONTENT_SCRIPT_VERSION = '2.8.0';
 
   if (window.__LENDEN_AUTO_INJECTED__) {
     return;
@@ -255,7 +255,14 @@
       }
     }
 
-    return found.length > 0 ? found : defaultList;
+    const result = found.length > 0 ? found : defaultList;
+
+    // Live Loans lives in the top navigation bar, not the Trending category box
+    if (getLiveLoansNavClickTargets().length > 0) {
+      result.push('Live Loans');
+    }
+
+    return result;
   }
 
   function findCategoryIconByGeometry(leafTextElement, scope = document.body) {
@@ -288,8 +295,68 @@
     return bestMatch;
   }
 
+  // -------------------------------------------------------------
+  // LIVE LOANS (TOP NAVIGATION BAR) HELPERS
+  // -------------------------------------------------------------
+
+  function isLiveLoansCategory(categoryName) {
+    return /^Live\s*Loans?$/i.test((categoryName || '').trim());
+  }
+
+  // Click targets for the "Live loans" item in the top navigation bar (opens /manual-lending)
+  function getLiveLoansNavClickTargets() {
+    const targets = [];
+    const push = (el, desc) => {
+      if (!el || el === document.body || el.id === 'root' || el.id === '__next') return;
+      if (el.closest('#lenden-auto-hud')) return;
+      if (targets.some(t => t.el === el)) return;
+      const r = el.getBoundingClientRect();
+      if (r.width === 0 || r.height === 0) return;
+      targets.push({ el, desc });
+    };
+
+    const liveRegex = /^Live\s*loans$/i;
+    const textOf = (el) => ((el && (el.innerText || el.textContent)) || '').replace(/\s+/g, ' ').trim();
+
+    // 1. Leaf elements whose text is exactly "Live loans" (prefer header/nav, then closest to top of page)
+    const leaves = Array.from(document.querySelectorAll('*')).filter(el => {
+      if (el.closest('#lenden-auto-hud')) return false;
+      if (!liveRegex.test(textOf(el))) return false;
+      return !Array.from(el.children).some(c => liveRegex.test(textOf(c)));
+    });
+    leaves.sort((a, b) => {
+      const aNav = !!a.closest('header, nav');
+      const bNav = !!b.closest('header, nav');
+      if (aNav !== bNav) return aNav ? -1 : 1;
+      return a.getBoundingClientRect().top - b.getBoundingClientRect().top;
+    });
+
+    // 2. Direct links to the Live loans page
+    const hrefLinks = Array.from(document.querySelectorAll('a[href*="manual-lending"]'));
+    for (const a of hrefLinks) {
+      push(a, `Live loans Link (${a.tagName} → ${a.getAttribute('href')})`);
+    }
+
+    for (const leaf of leaves) {
+      const clickable = leaf.closest('a, button, [role="button"], [role="link"], [role="tab"], li');
+      push(clickable, `Live loans Nav Item (${clickable ? clickable.tagName : ''})`);
+      push(leaf, `Live loans Text Label (${leaf.tagName})`);
+      if (leaf.parentElement && leaf.parentElement.querySelector('svg, img')) {
+        push(leaf.parentElement, `Live loans Nav Wrapper (${leaf.parentElement.tagName})`);
+      }
+    }
+
+    return targets;
+  }
+
   // Category targets strictly inside the Trending Category box
   function getCategoryClickTargets(categoryName) {
+    // Live Loans is opened from the top navigation bar (not the Trending category box);
+    // everything after opening it follows the exact same category flow.
+    if (isLiveLoansCategory(categoryName)) {
+      return getLiveLoansNavClickTargets();
+    }
+
     const reg = new RegExp(categoryName.replace(/\s+/g, '\\s*'), 'i');
     const trending = getTrendingContainer() || document.body;
 
