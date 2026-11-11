@@ -15,6 +15,7 @@ A Google Chrome Extension (Manifest V3) designed to automatically navigate LenDe
      - ⏱ **Filling Fast**
      - 🗓 **Earn Monthly**
      *(Earn Daily is skipped by default as requested)*
+   - Optional: 📡 **Live Loans** (opened from the top navigation bar; enable it in the **Categories** tab). It then follows the exact same Filter & Sort → Click to load → Apply → Bureau Score → Add → Continue flow.
 3. **Filter & Sort Application**:
    - Clicks **"Filter & Sort"** (funnel icon).
    - Re-loads your saved filters by clicking **"Click to load"**.
