@@ -22,6 +22,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   const catFilling = document.getElementById('cat-filling');
   const catDaily = document.getElementById('cat-daily');
   const catMonthly = document.getElementById('cat-monthly');
+  const catLive = document.getElementById('cat-live');
   const optAutoDetect = document.getElementById('opt-auto-detect');
 
   // Options
@@ -106,6 +107,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   catFilling.checked = cats.includes('Filling Fast');
   catMonthly.checked = cats.includes('Earn Monthly');
   catDaily.checked = cats.includes('Earn Daily'); // Unchecked by default
+  if (catLive) catLive.checked = cats.includes('Live Loans'); // Unchecked by default
 
   optAutoDetect.checked = currentSettings.autoDetectCategories === true;
 
@@ -139,7 +141,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   const autoSaveInputs = [
     masterToggle, inputTargetMinutes, inputIntervalMins,
-    catRepeat, catFilling, catDaily, catMonthly, optAutoDetect,
+    catRepeat, catFilling, catDaily, catMonthly, catLive, optAutoDetect,
     inputMinScore, optAutoAdd, inputMaxLoans, inputMaxSelect, optSelectMinAmount,
     inputDelay, optAutoOpen, optFloatingHud, optNotifications
   ].filter(Boolean);
@@ -154,6 +156,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (catFilling.checked) selectedCats.push('Filling Fast');
     if (catMonthly.checked) selectedCats.push('Earn Monthly');
     if (catDaily.checked) selectedCats.push('Earn Daily');
+    if (catLive && catLive.checked) selectedCats.push('Live Loans');
 
     const parsedMins = (inputTargetMinutes.value || '1, 31')
       .split(',')
