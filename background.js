@@ -1,6 +1,6 @@
 // LenDenClub Auto-Filter & Reload - Background Service Worker
 
-const SCRIPT_VERSION = '2.8.0';
+const SCRIPT_VERSION = '2.9.0';
 const ALARM_NAME = 'LENDEN_CYCLE_ALARM';
 
 const DEFAULT_SETTINGS = {
@@ -370,9 +370,9 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         const { savedSelectedLoans = [] } = await chrome.storage.local.get(['savedSelectedLoans']);
         const loan = request.loan;
         if (loan && loan.name) {
-          const normName = loan.name.toLowerCase().replace(/^(mr|ms|mrs)\.?\s+/i, '').replace(/\s+/g, ' ').trim();
+          const normName = loan.name.toLowerCase().replace(/^(mr|ms|mrs|miss)\.?\s+/i, '').replace(/\s+/g, ' ').trim();
           const existingIndex = savedSelectedLoans.findIndex(item => {
-            const itemNorm = (item.name || '').toLowerCase().replace(/^(mr|ms|mrs)\.?\s+/i, '').replace(/\s+/g, ' ').trim();
+            const itemNorm = (item.name || '').toLowerCase().replace(/^(mr|ms|mrs|miss)\.?\s+/i, '').replace(/\s+/g, ' ').trim();
             if (loan.loanId && item.loanId && loan.loanId === item.loanId) return true;
             return itemNorm === normName;
           });
@@ -388,11 +388,10 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             status: status,
             reason: reason,
             timestamp: loan.timestamp || Date.now(),
-            addedDate: new Date().toLocaleString()
+            addedDate: loan.addedDate || new Date(loan.timestamp || Date.now()).toLocaleString()
           };
 
           if (existingIndex >= 0) {
-            // If already exists, upgrade to Accepted if newly accepted, or update details
             if (status === 'Accepted' || savedSelectedLoans[existingIndex].status !== 'Accepted') {
               savedSelectedLoans[existingIndex] = record;
             }
@@ -407,6 +406,138 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         }
       } catch (e) {
         console.error('Failed to save loan evaluation:', e);
+      }
+      sendResponse({ status: 'ok' });
+    })();
+    return true;
+  }
+
+  if (request.action === 'SAVE_SELECTED_LOANS_BATCH') {
+    (async () => {
+      try {
+        const loans = Array.isArray(request.loans) ? request.loans : [];
+        if (loans.length > 0) {
+          const { savedSelectedLoans = [] } = await chrome.storage.local.get(['savedSelectedLoans']);
+          let addedOrUpdated = 0;
+
+          for (const loan of loans) {
+            if (!loan || !loan.name) continue;
+            const normName = loan.name.toLowerCase().replace(/^(mr|ms|mrs|miss)\.?\s+/i, '').replace(/\s+/g, ' ').trim();
+            const existingIndex = savedSelectedLoans.findIndex(item => {
+              const itemNorm = (item.name || '').toLowerCase().replace(/^(mr|ms|mrs|miss)\.?\s+/i, '').replace(/\s+/g, ' ').trim();
+              if (loan.loanId && item.loanId && loan.loanId === item.loanId) return true;
+              return itemNorm === normName;
+            });
+
+            const status = loan.status || 'Accepted';
+            const reason = loan.reason || (status === 'Accepted' ? `Bureau Score ${loan.bureauScore} >= threshold` : `Bureau Score ${loan.bureauScore} < threshold`);
+            const ts = loan.timestamp || Date.now();
+
+            const record = {
+              name: loan.name,
+              loanId: loan.loanId || `LDC-${ts.toString(36).toUpperCase()}`,
+              bureauScore: loan.bureauScore,
+              category: loan.category || 'General',
+              status: status,
+              reason: reason,
+              timestamp: ts,
+              addedDate: loan.addedDate || new Date(ts).toLocaleString()
+            };
+
+            if (existingIndex >= 0) {
+              savedSelectedLoans[existingIndex] = record;
+            } else {
+              savedSelectedLoans.unshift(record);
+            }
+            addedOrUpdated++;
+          }
+
+          await chrome.storage.local.set({ savedSelectedLoans });
+          addLog(`★ Saved ${addedOrUpdated} committed loan(s) to history after Continue.`, 'success');
+        }
+      } catch (e) {
+        console.error('Failed to save loan batch:', e);
+      }
+      sendResponse({ status: 'ok' });
+    })();
+    return true;
+  }
+
+  if (request.action === 'DELETE_SAVED_LOAN') {
+    (async () => {
+      try {
+        const { savedSelectedLoans = [] } = await chrome.storage.local.get(['savedSelectedLoans']);
+        const targetId = request.loanId || '';
+        const targetName = (request.name || '').toLowerCase().trim();
+        const targetTs = request.timestamp;
+
+        const idx = savedSelectedLoans.findIndex(l => {
+          if (targetTs && l.timestamp === targetTs && (l.name || '').toLowerCase().trim() === targetName) return true;
+          if (targetId && l.loanId === targetId) return true;
+          return (l.name || '').toLowerCase().trim() === targetName;
+        });
+
+        if (idx >= 0) {
+          const removed = savedSelectedLoans.splice(idx, 1)[0];
+          await chrome.storage.local.set({ savedSelectedLoans });
+          addLog(`Removed "${removed.name}" (${removed.loanId || 'N/A'}) from saved history.`, 'info');
+        }
+      } catch (e) {
+        console.error('Failed to delete saved loan:', e);
+      }
+      sendResponse({ status: 'ok' });
+    })();
+    return true;
+  }
+
+  if (request.action === 'DELETE_SAVED_LOANS_BULK') {
+    (async () => {
+      try {
+        const { savedSelectedLoans = [] } = await chrome.storage.local.get(['savedSelectedLoans']);
+        const keysToRemove = new Set(Array.isArray(request.keys) ? request.keys : []);
+        const beforeCount = savedSelectedLoans.length;
+
+        const remaining = savedSelectedLoans.filter(l => {
+          const key = `${l.loanId || ''}|${(l.name || '').toLowerCase().trim()}|${l.timestamp || ''}`;
+          return !keysToRemove.has(key);
+        });
+
+        const removedCount = beforeCount - remaining.length;
+        await chrome.storage.local.set({ savedSelectedLoans: remaining });
+        addLog(`★ Removed ${removedCount} loan(s) from saved history. They are now re-eligible for future runs.`, 'info');
+        sendResponse({ status: 'ok', removedCount });
+      } catch (e) {
+        console.error('Failed to bulk delete saved loans:', e);
+        sendResponse({ status: 'error' });
+      }
+    })();
+    return true;
+  }
+
+  if (request.action === 'TOGGLE_SAVED_LOAN_STATUS') {
+    (async () => {
+      try {
+        const { savedSelectedLoans = [] } = await chrome.storage.local.get(['savedSelectedLoans']);
+        const targetId = request.loanId || '';
+        const targetName = (request.name || '').toLowerCase().trim();
+        const targetTs = request.timestamp;
+
+        const idx = savedSelectedLoans.findIndex(l => {
+          if (targetTs && l.timestamp === targetTs && (l.name || '').toLowerCase().trim() === targetName) return true;
+          if (targetId && l.loanId === targetId) return true;
+          return (l.name || '').toLowerCase().trim() === targetName;
+        });
+
+        if (idx >= 0) {
+          const item = savedSelectedLoans[idx];
+          const newStatus = (item.status || 'Accepted') === 'Accepted' ? 'Rejected' : 'Accepted';
+          item.status = newStatus;
+          item.reason = `Manually marked as ${newStatus} (Score: ${item.bureauScore ?? 'N/A'})`;
+          await chrome.storage.local.set({ savedSelectedLoans });
+          addLog(`Updated "${item.name}" status to ${newStatus} in saved history.`, 'info');
+        }
+      } catch (e) {
+        console.error('Failed to toggle saved loan status:', e);
       }
       sendResponse({ status: 'ok' });
     })();
