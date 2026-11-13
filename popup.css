@@ -578,10 +578,14 @@ input:checked + .slider:before {
 
 .saved-search-container {
   margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .saved-search-input {
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   padding: 7px 10px;
   font-size: 12px;
   border: 1px solid var(--border);
@@ -594,6 +598,35 @@ input:checked + .slider:before {
 .saved-search-input:focus {
   outline: none;
   border-color: var(--primary);
+}
+
+.btn-loan-delete {
+  background: transparent;
+  border: 1px solid transparent;
+  color: #94a3b8;
+  font-size: 11px;
+  line-height: 1;
+  padding: 2px 5px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-loan-delete:hover {
+  background: #fee2e2;
+  border-color: #fecaca;
+  color: #dc2626;
+}
+
+.status-badge.clickable {
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: opacity 0.15s ease, transform 0.1s ease;
+}
+
+.status-badge.clickable:hover {
+  opacity: 0.85;
+  border-color: currentColor;
 }
 
 .saved-loans-container {
