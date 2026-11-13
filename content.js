@@ -1,7 +1,7 @@
 // LenDenClub Auto-Filter & Smart Loan Picker - Content Script
 
 (() => {
-  const CONTENT_SCRIPT_VERSION = '2.8.0';
+  const CONTENT_SCRIPT_VERSION = '2.9.0';
 
   if (window.__LENDEN_AUTO_INJECTED__) {
     return;
@@ -16,6 +16,43 @@
   let currentSettings = null;
   let hudElement = null;
   let hudMinimized = true;
+  let pendingAcceptedLoans = [];
+
+  async function commitPendingAcceptedLoans(reason = 'Continue clicked') {
+    if (!pendingAcceptedLoans || pendingAcceptedLoans.length === 0) return 0;
+    const toCommit = pendingAcceptedLoans.slice();
+    pendingAcceptedLoans = [];
+    try {
+      await chrome.runtime.sendMessage({
+        action: 'SAVE_SELECTED_LOANS_BATCH',
+        loans: toCommit
+      });
+      logEvent(`★ Committed ${toCommit.length} accepted loan(s) to Saved History (${reason}).`, 'success');
+    } catch (e) {}
+    return toCommit.length;
+  }
+
+  function discardPendingAcceptedLoans(reason = 'Session ended before Continue') {
+    if (!pendingAcceptedLoans || pendingAcceptedLoans.length === 0) return 0;
+    const count = pendingAcceptedLoans.length;
+    pendingAcceptedLoans = [];
+    logEvent(`⚠ Discarded ${count} uncommitted accepted loan(s) (${reason}). They remain eligible for future runs.`, 'warn');
+    return count;
+  }
+
+  // If user manually clicks "Continue" on the page (e.g. after stopping a cycle), commit pending accepted loans
+  document.addEventListener('click', (e) => {
+    if (!pendingAcceptedLoans || pendingAcceptedLoans.length === 0) return;
+    const target = e.target && e.target.closest ? (e.target.closest('button, [role="button"], a, div') || e.target) : null;
+    if (!target || (target.closest && target.closest('#lenden-auto-hud'))) return;
+    const text = (target.innerText || target.textContent || '').trim();
+    if (/^\s*Continue(?:\s*[>→›])?\s*$/i.test(text)) {
+      const isDisabled = target.disabled || target.getAttribute('aria-disabled') === 'true' || target.classList.contains('disabled');
+      if (!isDisabled) {
+        commitPendingAcceptedLoans('Continue clicked on page');
+      }
+    }
+  }, true);
 
   // Listen for messages from background / popup
   chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
@@ -53,6 +90,10 @@
           closeBorrowerModalAndWait(modal).catch(() => {});
         }
       } catch (e) {}
+
+      if (pendingAcceptedLoans.length > 0) {
+        logEvent(`ℹ ${pendingAcceptedLoans.length} selected loan(s) are NOT saved to history yet. Click "Continue" on page to save them, or refresh/restart to discard them.`, 'info');
+      }
 
       updateHudStatus('error', 'Stopped by user');
       logEvent('★ Cycle immediately stopped by user.', 'warn');
@@ -581,6 +622,7 @@
     // 1. If on "Order Placed Successfully" screen, click "Lend More"
     const lendMoreBtn = findLeafElementByText(/^Lend\s+More$/i);
     if (lendMoreBtn) {
+      await commitPendingAcceptedLoans('Order Success page reached');
       logEvent('Found "Lend More" link on Order Success page. Clicking...', 'info');
       triggerRealClick(lendMoreBtn);
       await sleep(Math.max(2500, actionDelay));
@@ -589,6 +631,9 @@
         return true;
       }
     }
+
+    // Navigating away without Order Success: discard any uncommitted selections
+    discardPendingAcceptedLoans('Navigated back to main categories page before Continue');
 
     // 2. Click back arrow (←) if present
     const backBtn = findBackButton();
@@ -1317,7 +1362,7 @@
       if (status === 'Accepted') acceptedCount++;
       else rejectedCount++;
 
-      const norm = (l.name || '').toLowerCase().replace(/^(mr|ms|mrs)\.?\s+/i, '').replace(/\s+/g, ' ').trim();
+      const norm = (l.name || '').toLowerCase().replace(/^(mr|ms|mrs|miss)\.?\s+/i, '').replace(/\s+/g, ' ').trim();
       if (norm) {
         savedNameMap.set(norm, l);
       }
@@ -1383,7 +1428,7 @@
       processedBorrowerNames.add(borrower.name);
 
       // PRE-CHECK: Check if this borrower was already evaluated previously (Saved History) or in current batch
-      const normBorrowerName = (borrower.name || '').toLowerCase().replace(/^(mr|ms|mrs)\.?\s+/i, '').replace(/\s+/g, ' ').trim();
+      const normBorrowerName = (borrower.name || '').toLowerCase().replace(/^(mr|ms|mrs|miss)\.?\s+/i, '').replace(/\s+/g, ' ').trim();
       const savedRecord = (normBorrowerName && savedNameMap.get(normBorrowerName)) ||
                           (borrower.loanId && savedIdMap.get(borrower.loanId.toLowerCase().trim()));
 
@@ -1436,6 +1481,18 @@
 
       await sleep(500);
 
+      // Secondary pre-check inside modal by Loan ID (in case Loan ID is only visible inside the modal)
+      const detectedModalLoanId = extractLoanIdentifier(borrower.card, modal);
+      if (detectedModalLoanId) {
+        const existingById = savedIdMap.get(detectedModalLoanId.toLowerCase().trim());
+        if (existingById && (existingById.status || 'Accepted') === 'Accepted') {
+          logEvent(`↷ Skipping "${borrower.name}" (${detectedModalLoanId}): Already Accepted in Saved History (${existingById.category || 'previous category'}).`, 'info');
+          await closeBorrowerModalAndWait(modal);
+          await sleep(400);
+          continue;
+        }
+      }
+
       // Expand "Risk Category & Score" (Image 5 & user image)
       const expanded = await expandRiskCategorySection(modal);
       await sleep(400);
@@ -1454,7 +1511,7 @@
             qualifiedCount++;
             await sleep(1000);
 
-            // Extract Loan ID and save to persistent history as Accepted
+            // Queue Loan ID in session buffer — only saved to persistent history after "Continue" is clicked!
             const loanId = extractLoanIdentifier(borrower.card, modal) || `LDC-${Math.floor(100000 + Math.random() * 900000)}`;
             const record = {
               name: borrower.name,
@@ -1465,10 +1522,8 @@
               reason: `Bureau Score ${bureauScore} >= ${minScore}`,
               timestamp: Date.now()
             };
-            chrome.runtime.sendMessage({
-              action: 'SAVE_SELECTED_LOAN',
-              loan: record
-            }).catch(() => {});
+            pendingAcceptedLoans.push(record);
+            logEvent(`✚ Queued "${borrower.name}" (Score: ${bureauScore}, ID: ${loanId}) — will save to history after "Continue".`, 'info');
 
             if (normBorrowerName) savedNameMap.set(normBorrowerName, record);
             if (loanId) savedIdMap.set(loanId.toLowerCase().trim(), record);
@@ -1498,10 +1553,8 @@
               reason: `Bureau Score ${bureauScore} >= ${minScore}`,
               timestamp: Date.now()
             };
-            chrome.runtime.sendMessage({
-              action: 'SAVE_SELECTED_LOAN',
-              loan: record
-            }).catch(() => {});
+            pendingAcceptedLoans.push(record);
+            logEvent(`✚ Queued "${borrower.name}" (Score: ${bureauScore}, ID: ${loanId}) — will save to history after "Continue".`, 'info');
 
             if (normBorrowerName) savedNameMap.set(normBorrowerName, record);
             if (loanId) savedIdMap.set(loanId.toLowerCase().trim(), record);
@@ -1662,6 +1715,7 @@
     logEvent(`Clicking "Continue" button for "${categoryName}"...`, 'info');
     triggerRealClick(targetBtn);
     logEvent(`✓ Clicked "Continue" for "${categoryName}"!`, 'success');
+    await commitPendingAcceptedLoans(`Continue clicked in "${categoryName}"`);
     await sleep(Math.max(2500, actionDelay));
 
     // Wait for "Order Placed Successfully" or "Lend More"
@@ -1685,6 +1739,11 @@
   async function startAutomationCycle(settings) {
     isCycleRunning = true;
     const actionDelay = Math.max(1200, parseInt(settings.actionDelayMs || 1800, 10));
+
+    // Clear any stale uncommitted selections from an earlier aborted cycle
+    if (pendingAcceptedLoans.length > 0) {
+      discardPendingAcceptedLoans('New cycle started before previous selections were continued');
+    }
 
     initHud(settings);
     updateHudStatus('running', 'Starting cycle...');
@@ -2071,8 +2130,15 @@
       let continued = false;
       if (addedCount > 0) {
         continued = await clickContinueIfAvailable(categoryName, actionDelay, addedCount);
-        logEvent(`★ Category "${categoryName}" completed! Added ${addedCount} loan(s) and placed order.`, 'success');
+        if (continued) {
+          await commitPendingAcceptedLoans(`Category "${categoryName}" completed`);
+          logEvent(`★ Category "${categoryName}" completed! Added ${addedCount} loan(s) and placed order.`, 'success');
+        } else {
+          discardPendingAcceptedLoans(`"Continue" button could not be clicked in "${categoryName}"`);
+          logEvent(`⚠ Could not click "Continue" in "${categoryName}". Discarded ${addedCount} uncommitted selection(s) from history.`, 'warn');
+        }
       } else {
+        discardPendingAcceptedLoans(`No loans added in "${categoryName}"`);
         logEvent(`ℹ No qualified loans added in "${categoryName}". Returning to main page...`, 'info');
         await returnToMainPage(actionDelay);
         await sleep(actionDelay);
