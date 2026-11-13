@@ -267,7 +267,10 @@
       </div>
 
       <div class="saved-search-container">
-        <input type="text" id="input-saved-search" placeholder="🔍 Search borrower, ID, category, or score..." class="saved-search-input">
+        <input type="text" id="input-saved-search" placeholder="🔍 Search borrower, ID, category, score, or time..." class="saved-search-input">
+        <button id="btn-delete-filtered" class="btn btn-sm btn-danger" title="Delete only the currently filtered/shown loans">
+          🗑 Clear Shown (<span id="saved-shown-count">0</span>)
+        </button>
       </div>
 
       <div id="saved-loans-container" class="saved-loans-container">
