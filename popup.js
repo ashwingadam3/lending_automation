@@ -336,10 +336,13 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
 
   let currentSavedFilter = 'all';
+  let currentFilteredList = [];
 
   const savedFilterAllCount = document.getElementById('saved-filter-all-count');
   const savedFilterAccCount = document.getElementById('saved-filter-acc-count');
   const savedFilterRejCount = document.getElementById('saved-filter-rej-count');
+  const savedShownCount = document.getElementById('saved-shown-count');
+  const btnDeleteFiltered = document.getElementById('btn-delete-filtered');
 
   function loadSavedLoans() {
     chrome.storage.local.get(['savedSelectedLoans'], (res) => {
@@ -371,14 +374,20 @@ document.addEventListener('DOMContentLoaded', async () => {
     const query = (inputSavedSearch?.value || '').trim().toLowerCase();
     if (query) {
       list = list.filter(l => {
+        const timeStr = l.addedDate || (l.timestamp ? new Date(l.timestamp).toLocaleString() : '');
         return (l.name && l.name.toLowerCase().includes(query)) ||
                (l.loanId && l.loanId.toLowerCase().includes(query)) ||
                (l.category && l.category.toLowerCase().includes(query)) ||
                (l.status && l.status.toLowerCase().includes(query)) ||
                (l.reason && l.reason.toLowerCase().includes(query)) ||
+               (timeStr && timeStr.toLowerCase().includes(query)) ||
                (String(l.bureauScore).includes(query));
       });
     }
+
+    currentFilteredList = list;
+    if (savedShownCount) savedShownCount.textContent = list.length;
+    if (btnDeleteFiltered) btnDeleteFiltered.disabled = list.length === 0;
 
     if (list.length === 0) {
       if (query) {
@@ -394,7 +403,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           <div class="saved-empty-state">
             <div class="empty-icon">📂</div>
             <div class="empty-title">No ${filterName} loans yet</div>
-            <div class="empty-desc">When loans are evaluated (${currentSavedFilter === 'all' ? 'accepted or rejected' : currentSavedFilter}), they will appear here and are skipped in future cycles.</div>
+            <div class="empty-desc">When loans are evaluated (${currentSavedFilter === 'all' ? 'accepted after Continue or rejected' : currentSavedFilter}), they will appear here and are skipped in future cycles.</div>
           </div>`;
       }
       return;
@@ -403,20 +412,24 @@ document.addEventListener('DOMContentLoaded', async () => {
     savedLoansContainer.innerHTML = list.map(l => {
       const status = l.status || 'Accepted';
       const isAcc = status === 'Accepted';
+      const dataAttrs = `data-loan-id="${escapeHtml(l.loanId || '')}" data-name="${escapeHtml(l.name || '')}" data-ts="${escapeHtml(String(l.timestamp || ''))}"`;
       const statusBadge = isAcc
-        ? `<span class="status-badge status-accepted">✓ Accepted</span>`
-        : `<span class="status-badge status-rejected">✕ Rejected</span>`;
+        ? `<span class="status-badge status-accepted clickable btn-toggle-loan-status" ${dataAttrs} title="Click to change status to Rejected">✓ Accepted</span>`
+        : `<span class="status-badge status-rejected clickable btn-toggle-loan-status" ${dataAttrs} title="Click to change status to Accepted">✕ Rejected</span>`;
       const scoreClass = isAcc ? 'saved-loan-score' : 'saved-loan-score rejected';
       const timeStr = l.addedDate || (l.timestamp ? new Date(l.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '');
 
       return `
         <div class="saved-loan-item">
           <div class="saved-loan-top">
-            <div style="display: flex; align-items: center; gap: 6px;">
+            <div style="display: flex; align-items: center; gap: 6px; min-width: 0;">
               <span class="saved-loan-name">${escapeHtml(l.name)}</span>
               ${statusBadge}
             </div>
-            <span class="${scoreClass}">Score: ${escapeHtml(String(l.bureauScore ?? 'N/A'))}</span>
+            <div style="display: flex; align-items: center; gap: 6px; flex-shrink: 0;">
+              <span class="${scoreClass}">Score: ${escapeHtml(String(l.bureauScore ?? 'N/A'))}</span>
+              <button class="btn-loan-delete" ${dataAttrs} title="Remove from saved history so it will be checked again">✕</button>
+            </div>
           </div>
           ${l.reason ? `<div class="saved-loan-reason">${escapeHtml(l.reason)}</div>` : ''}
           <div class="saved-loan-bottom" style="margin-top: 2px;">
@@ -427,6 +440,58 @@ document.addEventListener('DOMContentLoaded', async () => {
         </div>
       `;
     }).join('');
+  }
+
+  // Event delegation for per-loan delete and status toggle inside savedLoansContainer
+  if (savedLoansContainer) {
+    savedLoansContainer.addEventListener('click', (e) => {
+      const delBtn = e.target.closest('.btn-loan-delete');
+      if (delBtn) {
+        const loanId = delBtn.dataset.loanId || '';
+        const name = delBtn.dataset.name || '';
+        const ts = delBtn.dataset.ts ? Number(delBtn.dataset.ts) : null;
+        chrome.runtime.sendMessage({
+          action: 'DELETE_SAVED_LOAN',
+          loanId,
+          name,
+          timestamp: ts
+        });
+        return;
+      }
+
+      const toggleBadge = e.target.closest('.btn-toggle-loan-status');
+      if (toggleBadge) {
+        const loanId = toggleBadge.dataset.loanId || '';
+        const name = toggleBadge.dataset.name || '';
+        const ts = toggleBadge.dataset.ts ? Number(toggleBadge.dataset.ts) : null;
+        chrome.runtime.sendMessage({
+          action: 'TOGGLE_SAVED_LOAN_STATUS',
+          loanId,
+          name,
+          timestamp: ts
+        });
+      }
+    });
+  }
+
+  if (btnDeleteFiltered) {
+    btnDeleteFiltered.addEventListener('click', () => {
+      if (!currentFilteredList || currentFilteredList.length === 0) return;
+
+      const count = currentFilteredList.length;
+      const filterDesc = currentSavedFilter === 'all' ? 'shown' : currentSavedFilter;
+      const query = (inputSavedSearch?.value || '').trim();
+      const desc = query ? `${count} ${filterDesc} loan(s) matching "${query}"` : `${count} ${filterDesc} loan(s)`;
+
+      const confirmed = confirm(`Remove ${desc} from Saved History?\n\nRemoved loans will be checked again in future runs (all other saved loans will be kept).`);
+      if (!confirmed) return;
+
+      const keys = currentFilteredList.map(l => `${l.loanId || ''}|${(l.name || '').toLowerCase().trim()}|${l.timestamp || ''}`);
+      chrome.runtime.sendMessage({
+        action: 'DELETE_SAVED_LOANS_BULK',
+        keys
+      });
+    });
   }
 
   // Filter pill click handlers
